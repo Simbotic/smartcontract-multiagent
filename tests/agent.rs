@@ -66,7 +66,7 @@ fn agent_lifetime_until_death() {
     let mins = (total_secs - hours * 60 * 60) / 60;
     let secs = total_secs - (hours * 60 * 60 + mins * 60);
 
-    // println!("{:#?}", agent.account);
+    println!("{:#?}", agent.account);
     println!(
         "RIP! Agent was alive for {} hours, {} minutes and {} seconds.",
         hours, mins, secs
