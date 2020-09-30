@@ -1,5 +1,3 @@
-extern crate time;
-
 #[macro_use]
 pub mod macros;
 pub mod asset;
