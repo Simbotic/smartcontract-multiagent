@@ -2,13 +2,14 @@
 name = "multiagent"
 version = "0.1.0"
 authors = ["Alex Rozgo <alex.rozgo@gmail.com>"]
+description = "Closed economic state-machine primitives for multi-agent problem solving"
+edition = "2024"
+readme = "README.md"
+repository = "https://github.com/Simbotic/smartcontract-multiagent"
+rust-version = "1.85"
 
 [dependencies]
 
 [lib]
 name = "multiagent"
 path = "src/lib.rs"
-
-[[bin]]
-name = "multiagent"
-path = "src/bin.rs"

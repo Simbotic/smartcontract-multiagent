@@ -1,12 +1,32 @@
-use asset::*;
-use account::*;
-use std::collections::HashMap;
+use std::hash::Hash;
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Rate {
-    pub credit: HashMap<Asset, Quantity>,
-    pub debit: HashMap<Asset, Quantity>,
+#[derive(Debug, Clone)]
+pub struct Rate<A> {
+    credit: crate::Basket<A>,
+    debit: crate::Basket<A>,
 }
 
-impl Rate {
+impl<A> Rate<A> {
+    pub fn new(credit: crate::Basket<A>, debit: crate::Basket<A>) -> Self {
+        Self { credit, debit }
+    }
+
+    pub fn credit(&self) -> &crate::Basket<A> {
+        &self.credit
+    }
+
+    pub fn debit(&self) -> &crate::Basket<A> {
+        &self.debit
+    }
 }
+
+impl<A> PartialEq for Rate<A>
+where
+    A: Eq + Hash,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.credit == other.credit && self.debit == other.debit
+    }
+}
+
+impl<A> Eq for Rate<A> where A: Eq + Hash {}

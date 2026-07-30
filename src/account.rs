@@ -1,130 +1,131 @@
-use asset::*;
-use rate::*;
-use std::collections::HashMap;
-use std::ops;
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Hash, Clone, Copy)]
-pub struct Quantity(pub i32);
+use crate::{Basket, Quantity};
+use std::error::Error;
+use std::fmt;
+use std::hash::Hash;
 
 #[derive(Debug, Clone)]
-pub struct Account(pub HashMap<Asset, Quantity>);
-
-pub enum Tranx {
-    Approved(Account, Account),
-    Denied(HashMap<Asset, Quantity>),
+pub struct Account<A> {
+    balances: Basket<A>,
 }
 
-impl Account {
-    pub fn quantity(&self, asset: &Asset) -> Quantity {
-        match self.0.get(asset) {
-            Some(quantity) => quantity.clone(),
-            None => Quantity(0),
-        }
+impl<A> Account<A> {
+    pub fn new(balances: Basket<A>) -> Self {
+        Self { balances }
     }
 
-    pub fn exchange(rate: &Rate, quantity: Quantity, buyer: &Account, seller: &Account) -> Tranx {
-        let credit = &Account(rate.credit.clone()) * quantity;
-        let debit = &Account(rate.debit.clone()) * quantity;
-        let (buyer, seller) = (&(buyer - &debit) + &credit, &(seller - &credit) + &debit);
-        let mut success = true;
-        let mut deficit = hashmap![];
-        {
-            let Account(buyer) = &buyer;
-            let Account(debit) = debit;
-            for asset in debit.keys() {
-                match buyer.get(asset) {
-                    Some(Quantity(quantity)) if *quantity < 0 => {
-                        success = false;
-                        deficit.insert(asset.clone(), Quantity(*quantity));
-                    }
-                    _ => (),
-                }
-            }
-        }
-        if success {
-            Tranx::Approved(buyer, seller)
-        } else {
-            Tranx::Denied(deficit)
-        }
+    pub fn balances(&self) -> &Basket<A> {
+        &self.balances
     }
 
-    pub fn map(&self) -> &HashMap<Asset, Quantity> {
-        let Account(map) = self;
-        map
-    }
-
-    fn prime(&mut self, rhs: &Account) {
-        let Account(lhs) = self;
-        let Account(rhs) = rhs;
-        for rhs_key in rhs.keys() {
-            if !lhs.contains_key(rhs_key) {
-                lhs.insert(rhs_key.clone(), Quantity(0));
-            }
-        }
-    }
-
-    fn op<F>(lhs: &Account, rhs: &Account, op: F) -> Account
-    where
-        F: Fn(&Quantity, &Quantity) -> Quantity,
-    {
-        let mut acc = hashmap![];
-        let mut lhs = lhs.clone();
-        let mut rhs = rhs.clone();
-        lhs.prime(&rhs);
-        rhs.prime(&lhs);
-        let Account(lhs) = lhs;
-        let Account(rhs) = rhs;
-        for key in lhs.keys() {
-            let lhs_quantity = lhs.get(key).unwrap();
-            let rhs_quantity = rhs.get(key).unwrap();
-            let quantity = op(lhs_quantity, rhs_quantity);
-            acc.insert(key.clone(), quantity.clone());
-        }
-        Account(acc)
+    pub fn into_balances(self) -> Basket<A> {
+        self.balances
     }
 }
 
-impl PartialEq for Account {
-    fn eq(&self, rhs: &Account) -> bool {
-        let mut lhs = self.clone();
-        let mut rhs = rhs.clone();
-        lhs.prime(&rhs);
-        rhs.prime(&lhs);
-        let Account(lhs) = lhs;
-        let Account(rhs) = rhs;
-        lhs == rhs
+impl<A> Account<A>
+where
+    A: Eq + Hash,
+{
+    pub fn balance(&self, asset: &A) -> Quantity {
+        self.balances.quantity(asset)
     }
 }
 
-impl<'a, 'b> ops::Add<&'a Account> for &'b Account {
-    type Output = Account;
+impl<A> Account<A>
+where
+    A: Clone + Eq + Hash,
+{
+    pub fn deposit(&mut self, assets: &Basket<A>) -> Result<(), AccountError<A>> {
+        let mut updated = self.balances.clone();
 
-    fn add(self, rhs: &Account) -> Account {
-        Account::op(self, rhs, |Quantity(lq), Quantity(rq)| Quantity(lq + rq))
-    }
-}
-
-impl<'a, 'b> ops::Sub<&'a Account> for &'b Account {
-    type Output = Account;
-
-    fn sub(self, rhs: &Account) -> Account {
-        Account::op(self, rhs, |Quantity(lq), Quantity(rq)| Quantity(lq - rq))
-    }
-}
-
-impl<'a> ops::Mul<Quantity> for &'a Account {
-    type Output = Account;
-
-    fn mul(self, rhs: Quantity) -> Account {
-        let Account(lhs) = self;
-        let keys = lhs.keys();
-        let mut lhs = lhs.clone();
-        let Quantity(rhs_quantity) = rhs;
-        for key in keys {
-            let q = lhs.entry(key.clone()).or_insert(Quantity(0));
-            let Quantity(lhs_quantity) = *q;
-            *q = Quantity(lhs_quantity * rhs_quantity);
+        for (asset, amount) in assets.iter() {
+            let balance = updated.quantity(asset);
+            let Some(balance) = balance.checked_add(amount) else {
+                return Err(AccountError::Overflow {
+                    asset: asset.clone(),
+                });
+            };
+            updated.insert(asset.clone(), balance);
         }
-        Account(lhs)
+
+        self.balances = updated;
+        Ok(())
+    }
+
+    pub fn withdraw(&mut self, assets: &Basket<A>) -> Result<(), AccountError<A>> {
+        let shortfall = self.balances.shortfall(assets);
+        if !shortfall.is_empty() {
+            return Err(AccountError::InsufficientBalance { shortfall });
+        }
+
+        let mut updated = self.balances.clone();
+        for (asset, amount) in assets.iter() {
+            let balance = updated
+                .quantity(asset)
+                .checked_sub(amount)
+                .expect("shortfall was checked before withdrawal");
+            updated.insert(asset.clone(), balance);
+        }
+
+        self.balances = updated;
+        Ok(())
     }
 }
+
+impl<A> Default for Account<A> {
+    fn default() -> Self {
+        Self::new(Basket::new())
+    }
+}
+
+impl<A> PartialEq for Account<A>
+where
+    A: Eq + Hash,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.balances == other.balances
+    }
+}
+
+impl<A> Eq for Account<A> where A: Eq + Hash {}
+
+impl<A> From<Basket<A>> for Account<A> {
+    fn from(balances: Basket<A>) -> Self {
+        Self::new(balances)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum AccountError<A> {
+    InsufficientBalance { shortfall: Basket<A> },
+    Overflow { asset: A },
+}
+
+impl<A> fmt::Display for AccountError<A> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InsufficientBalance { .. } => formatter.write_str("insufficient balance"),
+            Self::Overflow { .. } => formatter.write_str("account balance overflow"),
+        }
+    }
+}
+
+impl<A> Error for AccountError<A> where A: fmt::Debug {}
+
+impl<A> PartialEq for AccountError<A>
+where
+    A: Eq + Hash,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::InsufficientBalance { shortfall: left },
+                Self::InsufficientBalance { shortfall: right },
+            ) => left == right,
+            (Self::Overflow { asset: left }, Self::Overflow { asset: right }) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl<A> Eq for AccountError<A> where A: Eq + Hash {}
